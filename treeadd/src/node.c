@@ -5,6 +5,13 @@
 
 #include "common/timing.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+#include <math.h>
+
+
 #ifndef TORONTO
 #include <cm/cmmd.h>
 #endif
@@ -32,6 +39,8 @@ typedef struct {
     long 	level;
 } startmsg_t;
 
+int threshold = 0;
+
 int main (int argc, char *argv[])
 {
     tree_t	*root;
@@ -40,6 +49,10 @@ int main (int argc, char *argv[])
     struct timespec start, stop;
 
     OLDEN_TIME(total_start);
+
+#ifdef _OPENMP
+    threshold = log2(omp_get_max_threads());
+#endif /* _OPENMP */
 
 #ifdef FUTURES
     level = SPMDInit(argc,argv);
@@ -91,6 +104,8 @@ int main (int argc, char *argv[])
     {
         int i;
         for (i = 0; i < runs; ++i) {
+#pragma omp parallel
+#pragma omp single nowait
             result = TreeAdd (0, root);
         }
     }
@@ -151,13 +166,23 @@ int TreeAdd (int inc_level, tree_t *t)
     int value;
 
     tleft = t->left;            /* <---- 57% load penalty */
+#pragma omp task shared(leftval) firstprivate(tleft) final(inc_level > threshold)
+    {
     leftval = TreeAdd(inc_level + 1, tleft);
+    }
+
     tright = t->right;          /* <---- 11.4% load penalty */
+#pragma omp task shared(rightval) firstprivate(tright) final(inc_level > threshold)
+    {
     rightval = TreeAdd(inc_level + 1, tright);
+    }
     /*chatting("after touch\n");*/
     value = t->val;
     /*chatting("returning from treeadd %d\n",*/
 	     /*leftval.value + rightval.value + value);*/
+
+#pragma omp taskwait
+
     return leftval + rightval + value;
 #endif
   }
